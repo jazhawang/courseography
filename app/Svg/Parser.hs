@@ -78,7 +78,7 @@ performParseFromMemory :: T.Text -- ^ The title of the graph
                        -> SqlPersistM ()
 performParseFromMemory graphName graphSvg isDynamic = do
     key <- insertGraph graphName graphWidth graphHeight isDynamic
-    let parsedGraph = parseSvg key graphSvg
+    let parsedGraph = parseSvg key graphSvg isDynamic
     insertElements parsedGraph
         where (graphWidth, graphHeight) = parseSizeFromSvg graphSvg
 
@@ -96,8 +96,8 @@ parseSizeFromSvg graphSvg =
 
 -- | Parse an SVG file (respresented as a Text) and return three
 -- lists corresponding to different graph elements. (edges, nodes, text)
-parseSvg :: GraphId -> T.Text -> ([Path], [Shape], [Text])
-parseSvg key graphSvg =
+parseSvg :: GraphId -> T.Text -> Bool -> ([Path], [Shape], [Text])
+parseSvg key graphSvg isDynamic =
     let tags = TS.parseTags graphSvg
         -- Need to remove any "defs" which Inkscape added
         defs = TS.partitions (TS.isTagOpenName "defs") tags
@@ -109,15 +109,16 @@ parseSvg key graphSvg =
                 -- TODO: pull this out into a generic helper
                 takeWhile (not . TS.isTagOpenName "defs") tags ++
                 concatMap (dropWhile (not . TS.isTagCloseName "defs")) defs
-    in parseGraph key tagsWithoutDefs
+    in parseGraph key tagsWithoutDefs isDynamic
 
 -- | This and the following functions traverse the raw SVG tags and return
 -- three lists, each containing values corresponding to different graph elements
 -- (edges, nodes, and text).
 parseGraph ::  GraphId                 -- ^ The unique identifier of the graph.
            -> [Tag T.Text]             -- ^ The tags of the graph.
+           -> Bool                     -- ^ True if the graph is dynamically generated
            -> ([Path],[Shape],[Text])
-parseGraph key tags =
+parseGraph key tags isDynamic =
     let gTags = TS.partitions (TS.isTagOpenName "g") tags
         globalTransform = getTransform $ head $ head gTags
         ellipses = concatMap (parseEllipse key) gTags
@@ -127,13 +128,14 @@ parseGraph key tags =
         shapes = removeRedundant (ellipses ++ rects)
 
         paths' = map (\p -> p { pathPoints = map (addTuples globalTransform) $ pathPoints p}) paths
-        shapes' = map (\s -> s { shapePos = addTuples globalTransform (shapePos s)}) $ filter small shapes
+        shapes' = map (\s -> s { shapePos = addTuples globalTransform (shapePos s)}) $ filter smallOrDynamic shapes
         texts' = map (\t -> t { textPos = addTuples globalTransform (textPos t)}) texts
     in
         (paths', shapes', texts')
     where
         -- Raw SVG seems to have a rectangle the size of the whole image
-        small shape = shapeWidth shape < 300
+        -- Dynamically generated graphs don't have this property
+        smallOrDynamic shape = isDynamic || shapeWidth shape < 300
         removeRedundant shapes =
             filter (not . \s -> shapePos s `elem` map shapePos shapes &&
                                 (T.null (shapeFill s) || shapeFill s == "#000000") &&
