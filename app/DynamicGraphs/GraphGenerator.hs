@@ -251,6 +251,7 @@ nodeAttrs = NodeAttrs
     [ A.shape A.BoxShape
     , AC.FixedSize GrowAsNeeded
     , A.style A.filled
+    , AC.FontSize 18.0
     ]
 
 ellipseAttrs :: A.Attributes
