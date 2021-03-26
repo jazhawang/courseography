@@ -113,7 +113,7 @@ reqToStmts :: GraphOptions -> (Text, Req) -> State GeneratorState [DotStatement 
 reqToStmts options (name, req) = do
     if pickCourse options name
         then do 
-            node <- makeNode name $ Just (nodeColor options name)
+            node <- makeNode False name $ Just (nodeColor options name)
             stmts <- reqToStmtsTree options (nodeID node) req
             return $ DN node:concat (toList stmts)
         else return []
@@ -126,7 +126,7 @@ reqToStmtsTree _ _ NONE = return (Node [] [])
 reqToStmtsTree options parentID (J name2 _) = do
     let name = pack name2
     if pickCourse options name then do
-        prereq <- makeNode name $ Just (nodeColor options name)
+        prereq <- makeNode False name $ Just (nodeColor options name)
         edge <- makeEdge (nodeID prereq) parentID
         return (Node [DN prereq, DE edge] [])
     else
@@ -160,7 +160,7 @@ reqToStmtsTree options parentID (OR reqs) = do
 -- A prerequisite with a grade requirement.
 reqToStmtsTree options parentID (GRADE description req) = do
     if includeGrades options then do 
-        gradeNode <- makeNode (pack description) Nothing
+        gradeNode <- makeNode True (pack description) Nothing
         edge <- makeEdge (nodeID gradeNode) parentID
         prereqStmt <- reqToStmtsTree options (nodeID gradeNode) req
         return $ Node [DN gradeNode, DE edge] [prereqStmt]
@@ -170,12 +170,12 @@ reqToStmtsTree options parentID (RAW rawText) =
     if not (includeRaws options) || "High school" `isInfixOf` pack rawText || rawText == ""
         then return $ Node [] []
         else do
-            prereq <- makeNode (pack rawText) Nothing
+            prereq <- makeNode False (pack rawText) Nothing
             edge <- makeEdge (nodeID prereq) parentID
             return $ Node [DN prereq, DE edge] []
 --A prerequisite concerning a given number of earned credits
 reqToStmtsTree options parentID (FCES creds req) = do
-    fceNode <- makeNode (pack $ "at least " ++ creds ++ " FCEs") Nothing
+    fceNode <- makeNode False (pack $ "at least " ++ creds ++ " FCEs") Nothing
     edge <- makeEdge (nodeID fceNode) parentID
     prereqStmts <- reqToStmtsTree options (nodeID fceNode) req
     return $ Node [DN fceNode, DE edge] [prereqStmts]
@@ -184,10 +184,23 @@ reqToStmtsTree options parentID (FCES creds req) = do
 prefixedByOneOf :: Text -> [Text] -> Bool 
 prefixedByOneOf name = any (flip isPrefixOf name)
 
-makeNode :: Text -> Maybe Color -> State GeneratorState (DotNode Text)
-makeNode name nodeCol = do
+makeNode :: Bool -> Text -> Maybe Color -> State GeneratorState (DotNode Text)
+makeNode isGrade name nodeCol = do
     GeneratorState i nodesMap <- State.get
-    case Map.lookup name nodesMap of
+    if isGrade then do
+        let nodeId = mappendTextWithCounter name i
+            actualColor = case nodeCol of
+                    Nothing -> toColor Gray
+                    Just c -> c
+            node = DotNode nodeId
+                               [AC.Label $ toLabelValue name,
+                                ID nodeId,
+                                FillColor $ toColorList [actualColor]]
+            nodesMap' = Map.insert name node nodesMap
+        State.put (GeneratorState (i + 1) nodesMap')
+        return node
+    else
+        case Map.lookup name nodesMap of
         Nothing -> do
             let nodeId = mappendTextWithCounter name i
                 actualColor = case nodeCol of
